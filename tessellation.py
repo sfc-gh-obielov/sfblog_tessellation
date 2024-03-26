@@ -25,7 +25,7 @@ with col2:
 with col3:
     h3_res_2 = st.slider( "H3 resolution ", min_value=min_v_2, max_value=max_v_2, value=v_2)
 
-@st.cache_resource
+@st.cache_resource(ttl="2d")
 def get_df_shape_2(poly_scale_2: str) -> pd.DataFrame:
     df = session.sql(
         f"select geog from snowpublic.streamlit.h3_polygon_spherical where scale_of_polygon = '{poly_scale_2}'"
@@ -34,7 +34,7 @@ def get_df_shape_2(poly_scale_2: str) -> pd.DataFrame:
     return df
 
 
-@st.cache_resource
+@st.cache_resource(ttl="2d")
 def get_layer_shape_2(df: pd.DataFrame, line_color: List) -> pdk.Layer:
     return pdk.Layer("PolygonLayer", 
                      df, 
@@ -47,13 +47,13 @@ def get_layer_shape_2(df: pd.DataFrame, line_color: List) -> pdk.Layer:
                      get_line_color=line_color,
                      line_width_min_pixels=1)
 
-@st.cache_resource
+@st.cache_resource(ttl="2d")
 def get_df_coverage_2(h3_res_2: float, poly_scale_2: str) -> pd.DataFrame:
     return session.sql(
         f"select value::string as h3 from snowpublic.streamlit.h3_polygon_planar, TABLE(FLATTEN(h3_coverage_strings(geog, {h3_res_2}))) where scale_of_polygon = '{poly_scale_2}'"
     ).to_pandas()
 
-@st.cache_resource
+@st.cache_resource(ttl="2d")
 def get_layer_coverage_2(df_coverage_2: pd.DataFrame, line_color: List) -> pdk.Layer:
     return pdk.Layer("H3HexagonLayer", 
                      df_coverage_2, 
@@ -64,13 +64,13 @@ def get_layer_coverage_2(df_coverage_2: pd.DataFrame, line_color: List) -> pdk.L
                      get_line_color=line_color, 
                      line_width_min_pixels=1)
 
-@st.cache_resource
+@st.cache_resource(ttl="2d")
 def get_df_polyfill_2(h3_res_2: float, poly_scale_2: str) -> pd.DataFrame:
     return session.sql(
         f"select value::string as h3 from snowpublic.streamlit.h3_polygon_planar, TABLE(FLATTEN(h3_polygon_to_cells_strings(geog, {h3_res_2}))) where scale_of_polygon = '{poly_scale_2}'"
     ).to_pandas()
 
-@st.cache_resource
+@st.cache_resource(ttl="2d")
 def get_layer_polyfill_2(df_polyfill_2: pd.DataFrame, line_color: List) -> pdk.Layer:
     return pdk.Layer("H3HexagonLayer", 
                      df_polyfill_2, 
