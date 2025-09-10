@@ -3,14 +3,51 @@ import pandas as pd
 import pydeck as pdk
 from typing import List
 import json
+
 import h3
 
+# ---- H3 helpers (compat with v3/v4) ----
+_has_polygon_class = hasattr(h3, "Polygon")
+_has_polygon_to_cells = hasattr(h3, "polygon_to_cells")
+_has_polyfill = hasattr(h3, "polyfill")
+_grid_disk = getattr(h3, "grid_disk", None) or getattr(h3, "k_ring")
 
-_latlng_to_h3 = getattr(h3, "latlng_to_cell", None) or getattr(h3, "geo_to_h3")
-_polygon_to_cells = getattr(h3, "polygon_to_cells", None) or getattr(h3, "polyfill")
-_grid_disk = getattr(h3, "grid_disk", None) or getattr(h3, "k_ring")  # both exist
+def _geojson_to_exterior_lonlat(geojson_str: str):
+    """Return exterior ring as list[[lon,lat], ...] from a Polygon/MultiPolygon GeoJSON string."""
+    g = json.loads(geojson_str)
+    t = g.get("type")
+    if t == "Polygon":
+        return g["coordinates"][0]
+    elif t == "MultiPolygon":
+        return g["coordinates"][0][0]  # take first polygon's exterior
+    else:
+        raise ValueError(f"Unsupported GeoJSON type: {t}")
 
-DATA_PATH = "data/h3_polygon_spherical.csv"  # uploaded dataset
+def _polyfill_compat(exterior_lonlat, res: int):
+    """Return a set of H3 indices covering the polygon (polyfill) for H3 v4 or v3."""
+    if _has_polygon_class and _has_polygon_to_cells:
+        # v4 string API expects Polygon with (lat,lng) tuples
+        exterior_latlng = [(lat, lon) for lon, lat in exterior_lonlat]
+        poly = h3.Polygon(exterior=exterior_latlng, holes=[])
+        return set(h3.polygon_to_cells(poly, res))
+    elif _has_polyfill:
+        # v3 API expects GeoJSON with [lon,lat]
+        gj = {"type": "Polygon", "coordinates": [exterior_lonlat]}
+        return set(h3.polyfill(gj, res, True))
+    else:
+        raise RuntimeError("No compatible H3 polyfill available in this environment.")
+
+def _boundary_from_polyfill(poly_cells: set) -> set:
+    """Cells on the boundary: at least one neighbor is outside the polyfill."""
+    boundary = set()
+    for h in poly_cells:
+        neighs = set(_grid_disk(h, 1)) - {h}  # neighbors only
+        if any(n not in poly_cells for n in neighs):
+            boundary.add(h)
+    return boundary
+
+# ---- App config ----
+DATA_PATH = "/mnt/data/h3_polygon_spherical.csv"  # uploaded dataset
 
 # ---------------- UI ----------------
 col1, col2, col3 = st.columns(3)
@@ -31,82 +68,38 @@ with col3:
 @st.cache_data(ttl="2d")
 def load_polygon_rows() -> pd.DataFrame:
     """
-    Load the polygon rows from the uploaded CSV. Expected columns:
-    - 'scale_of_polygon' (Global/Local)
-    - 'geog' (GeoJSON string with a Polygon or MultiPolygon)
+    Expect columns:
+      - scale_of_polygon: 'Global' or 'Local'
+      - geog: GeoJSON string (Polygon or MultiPolygon)
     """
     df = pd.read_csv(DATA_PATH)
-    df = df.rename(columns={c: c.lower() for c in df.columns})
+    df.columns = [c.lower() for c in df.columns]
     if not {"scale_of_polygon", "geog"}.issubset(df.columns):
-        raise ValueError("CSV must contain columns: scale_of_polygon, geog (as GeoJSON).")
+        raise ValueError("CSV must contain columns: scale_of_polygon, geog")
     return df
 
 @st.cache_data(ttl="2d")
 def get_df_shape_2(scale: str) -> pd.DataFrame:
-    """
-    Returns a dataframe with a 'coordinates' column suitable for pydeck PolygonLayer.
-    Assumes 'geog' contains GeoJSON. If MultiPolygon, flatten to list of rings.
-    """
     df = load_polygon_rows().query("scale_of_polygon == @scale").copy()
     if df.empty:
         raise ValueError(f"No polygon found in CSV for scale_of_polygon = '{scale}'")
-
-    def extract_rings(geojson_str: str):
-        g = json.loads(geojson_str)
-        if g.get("type") == "Polygon":
-            # pydeck expects a list of rings -> g['coordinates'] (first ring = exterior)
-            return g["coordinates"][0]
-        elif g.get("type") == "MultiPolygon":
-            # take the first polygon's exterior ring
-            return g["coordinates"][0][0]
-        else:
-            raise ValueError(f"Unsupported GeoJSON type: {g.get('type')}")
-
-    df["coordinates"] = df["geog"].apply(extract_rings)
-    return df[["coordinates"]]
-
-@st.cache_data(ttl="2d")
-def polygon_geojson_for(scale: str) -> dict:
-    """Return a simple GeoJSON Polygon for the selected scale (from the CSV)."""
-    row = get_df_shape_2(scale).iloc[0]
-    # H3 expects GeoJSON with [lon, lat]
-    coords = row["coordinates"]
-    return {"type": "Polygon", "coordinates": [coords]}
-
-@st.cache_data(ttl="2d")
-def df_from_h3_set(h3_set) -> pd.DataFrame:
-    return pd.DataFrame({"H3": list(h3_set)})
+    exterior_lonlat = _geojson_to_exterior_lonlat(df.iloc[0]["geog"])
+    df_out = pd.DataFrame({"coordinates": [exterior_lonlat]})
+    return df_out
 
 @st.cache_data(ttl="2d")
 def get_df_polyfill_2(res: int, scale: str) -> pd.DataFrame:
-    """
-    Precise fill: all hexes whose area covers the polygon (H3 polyfill).
-    """
-    gj = polygon_geojson_for(scale)
-    # h3 v4: polygon_to_cells; v3: polyfill(geojson, res, geo_json_conformant=True)
-    if _polygon_to_cells is getattr(h3, "polygon_to_cells", None):
-        cells = _polygon_to_cells(gj, res)
-    else:
-        cells = _polygon_to_cells(gj, res, True)
-    return df_from_h3_set(cells)
+    exterior_lonlat = _geojson_to_exterior_lonlat(
+        load_polygon_rows().query("scale_of_polygon == @scale").iloc[0]["geog"]
+    )
+    cells = _polyfill_compat(exterior_lonlat, res)
+    return pd.DataFrame({"H3": list(cells)})
 
 @st.cache_data(ttl="2d")
 def get_df_coverage_2(res: int, scale: str) -> pd.DataFrame:
-    """
-    Outline coverage: boundary cells = polyfill minus interior.
-    We mark cells whose at least one neighbor is outside the polyfill.
-    This mimics a boundary-style "coverage" visualization.
-    """
-    poly = set(get_df_polyfill_2(res, scale)["H3"].tolist())
-    boundary = set()
-    for h in poly:
-        # neighbors (v4: grid_disk(h, 1) includes the cell itself; v3: k_ring)
-        neighs = _grid_disk(h, 1)
-        # normalize to an iterable of neighbors (exclude self if present)
-        neighs = set(neighs) - {h}
-        if any(n not in poly for n in neighs):
-            boundary.add(h)
-    return df_from_h3_set(boundary)
+    poly_cells = set(get_df_polyfill_2(res, scale)["H3"])
+    boundary = _boundary_from_polyfill(poly_cells)
+    return pd.DataFrame({"H3": list(boundary)})
 
 # ---------------- Layers ----------------
 @st.cache_data(ttl="2d")
