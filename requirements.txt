@@ -3,3 +3,4 @@ snowflake-snowpark-python
 pandas
 branca
 pydeck
+h3
