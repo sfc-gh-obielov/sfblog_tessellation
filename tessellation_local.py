@@ -8,7 +8,7 @@ import h3
 
 _has_polygon_class = hasattr(h3, "Polygon")
 _has_polygon_to_cells = hasattr(h3, "polygon_to_cells")
-_has_polyfill = hasattr(h3, "polyfill")
+_has_polyfill = hasattr(h3, "polygon_to_cells")
 _grid_disk = getattr(h3, "grid_disk", None) or getattr(h3, "k_ring")
 
 def _geojson_to_exterior_lonlat(geojson_str: str):
