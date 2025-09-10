@@ -32,7 +32,7 @@ def _polyfill_compat(exterior_lonlat, res: int):
     elif _has_polyfill:
         # v3 API expects GeoJSON with [lon,lat]
         gj = {"type": "Polygon", "coordinates": [exterior_lonlat]}
-        return set(h3.polyfill(gj, res, True))
+        return set(h3.polygon_to_cells(gj, res, True))
     else:
         raise RuntimeError("No compatible H3 polyfill available in this environment.")
 
