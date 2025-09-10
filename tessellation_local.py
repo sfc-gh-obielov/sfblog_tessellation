@@ -6,7 +6,6 @@ import json
 
 import h3
 
-# ---- H3 helpers (compat with v3/v4) ----
 _has_polygon_class = hasattr(h3, "Polygon")
 _has_polygon_to_cells = hasattr(h3, "polygon_to_cells")
 _has_polyfill = hasattr(h3, "polyfill")
@@ -47,7 +46,7 @@ def _boundary_from_polyfill(poly_cells: set) -> set:
     return boundary
 
 # ---- App config ----
-DATA_PATH = "/mnt/data/h3_polygon_spherical.csv"  # uploaded dataset
+DATA_PATH = "data/h3_polygon_spherical.csv"  # uploaded dataset
 
 # ---------------- UI ----------------
 col1, col2, col3 = st.columns(3)
